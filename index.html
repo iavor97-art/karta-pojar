@@ -9,8 +9,6 @@
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@geoman-io/leaflet-geoman-free@2.20.0/dist/leaflet-geoman.css">
 <script src="https://cdn.jsdelivr.net/npm/leaflet@1.9.4/dist/leaflet.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/@geoman-io/leaflet-geoman-free@2.20.0/dist/leaflet-geoman.min.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/html2canvas@1.4.1/dist/html2canvas.min.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/jspdf@2.5.1/dist/jspdf.umd.min.js"></script>
 
 <style>
   :root{
@@ -137,11 +135,11 @@
   </div>
 
   <button id="btnPdf" disabled>
-    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
-    PDF
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><path d="M21 15l-5-5L5 21"/></svg>
+    Снимка
   </button>
 
-  <div id="busy"><div class="box glass"><div class="spin"></div>Генериране на PDF…</div></div>
+  <div id="busy"><div class="box glass"><div class="spin"></div>Създаване на снимка…</div></div>
 
 <script>
 (function(){
@@ -266,9 +264,9 @@
     {enableHighAccuracy:true,timeout:10000});
   };
 
-  // --- PDF ---
-  // Рисува начертаните елементи директно върху заснетия canvas (html2canvas
-  // не хваща надеждно векторния слой на Leaflet)
+  // --- Запазване като снимка (PNG) ---
+  // Снимката се сглобява от истинските плочки на картата + чертежа, върху
+  // едни и същи координати, затова няма разминаване.
   function drawOverlays(ctx, s){
     items.forEach(function(l){
       if(l instanceof L.Polygon){
@@ -296,54 +294,57 @@
     });
   }
 
+  // изчаква всички видими плочки да се заредят напълно
+  function waitForTiles(done){
+    var start=Date.now();
+    (function check(){
+      var imgs=map.getContainer().querySelectorAll('img.leaflet-tile'), pending=0;
+      imgs.forEach(function(im){ if(!(im.complete && im.naturalWidth>0)) pending++; });
+      if(pending===0 || Date.now()-start>4000) done();
+      else setTimeout(check,150);
+    })();
+  }
+
+  // сглобява плочки + чертеж в един canvas
+  function composeCanvas(){
+    var mapEl=map.getContainer(), rect=mapEl.getBoundingClientRect();
+    var dpr=Math.min(window.devicePixelRatio||1, 2);
+    var cw=Math.round(rect.width*dpr), ch=Math.round(rect.height*dpr);
+    var cv=document.createElement('canvas'); cv.width=cw; cv.height=ch;
+    var ctx=cv.getContext('2d');
+    ctx.fillStyle='#0f141a'; ctx.fillRect(0,0,cw,ch);
+    var tiles=mapEl.querySelectorAll('img.leaflet-tile');
+    tiles.forEach(function(im){
+      if(!(im.complete && im.naturalWidth>0)) return;
+      im.style.opacity=1;                                  // Leaflet избледнява при зареждане
+      var r=im.getBoundingClientRect();
+      var x=(r.left-rect.left)*dpr, y=(r.top-rect.top)*dpr, w=r.width*dpr, h=r.height*dpr;
+      try{ ctx.drawImage(im, x, y, w, h); }catch(e){}
+    });
+    drawOverlays(ctx, dpr);
+    return cv;
+  }
+
   document.getElementById('btnPdf').onclick=function(){
     if(!window.__area)return;
-    var busy=document.getElementById('busy');busy.style.display='grid';
-    var mapEl=document.getElementById('map');
-    var hide=document.querySelectorAll('.leaflet-control-container,.rbtns,#btnPdf,#areaTag,#hint');
-    hide.forEach(function(el){el.style.visibility='hidden';});
-
-    // побери чертежа в кадъра (без анимация, за да съвпаднат координатите)
+    var busy=document.getElementById('busy'); busy.style.display='grid';
     try{ var b=itemsBounds(); if(b.isValid()) map.fitBounds(b.pad(0.2),{animate:false}); }catch(e){}
-
-    setTimeout(function(){
-      // скрий векторния и маркерния слой, за да не се дублират с ръчното чертане
-      var op=map.getPane('overlayPane'), mp=map.getPane('markerPane');
-      op.style.visibility='hidden'; mp.style.visibility='hidden';
-
-      html2canvas(mapEl,{useCORS:true,allowTaint:false,logging:false,scale:2})
-      .then(function(cv){
-        op.style.visibility=''; mp.style.visibility='';
-        hide.forEach(function(el){el.style.visibility='';});
-        var ctx=cv.getContext('2d'), s=cv.width/mapEl.clientWidth;
-        drawOverlays(ctx,s);                                   // чертежът върху снимката
-        makePdf(cv.toDataURL('image/jpeg',0.92),cv.width,cv.height);
-      })
-      .catch(function(err){
-        op.style.visibility=''; mp.style.visibility='';
-        hide.forEach(function(el){el.style.visibility='';});
-        busy.style.display='none'; console.error(err);
-        alert('Картата не се засне автоматично. Алтернатива: Печат на браузъра → Запази като PDF.');
-      });
-    },1100);
+    waitForTiles(function(){
+      setTimeout(function(){
+        var url;
+        try{ url=composeCanvas().toDataURL('image/png'); }
+        catch(e){
+          busy.style.display='none'; console.error(e);
+          alert('Не можах да запазя снимката. Опитай пак или намали малко увеличението.');
+          return;
+        }
+        var a=document.createElement('a');
+        a.href=url; a.download='pozhar_'+new Date().toISOString().slice(0,10)+'.png';
+        document.body.appendChild(a); a.click(); a.remove();
+        busy.style.display='none';
+      }, 250);
+    });
   };
-
-  function makePdf(img,cw,ch){
-    var jsPDF=window.jspdf.jsPDF;
-    var landscape = cw >= ch;                       // PDF-ът следва формата на снимката
-    var doc=new jsPDF({orientation:landscape?'landscape':'portrait',unit:'mm',format:'a4'});
-    var W=doc.internal.pageSize.getWidth(), H=doc.internal.pageSize.getHeight(), mgn=8;
-
-    // само картата — вписана пропорционално, центрирана, без разтягане
-    var availW=W-2*mgn, availH=H-2*mgn;
-    var ar=cw/ch, dw=availW, dh=dw/ar;
-    if(dh>availH){ dh=availH; dw=dh*ar; }
-    var dx=mgn+(availW-dw)/2, dy=mgn+(availH-dh)/2;
-    try{doc.addImage(img,'JPEG',dx,dy,dw,dh,'','FAST');}catch(e){}
-
-    doc.save('pozhar_'+new Date().toISOString().slice(0,10)+'.pdf');
-    document.getElementById('busy').style.display='none';
-  }
 
   setTimeout(function(){map.invalidateSize();},200);
 })();
