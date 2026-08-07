@@ -191,23 +191,11 @@
   });
 
   map.pm.addControls({
-    position: 'topleft',
-
-    drawPolygon: true,
-
-    drawMarker: false,
-    drawPolyline: false,
-    drawCircle: false,
-    drawCircleMarker: false,
-    drawRectangle: false,
-    drawText: false,
-
-    editMode: false,
-    dragMode: false,
-    cutPolygon: false,
-    removalMode: true,
-    rotateMode: false
-});
+    position:'topleft',
+    drawMarker:true, drawPolyline:true, drawPolygon:true,
+    drawCircle:false, drawCircleMarker:false, drawRectangle:false, drawText:false,
+    editMode:true, dragMode:false, cutPolygon:false, removalMode:true, rotateMode:false
+  });
 
   // --- Управление на начертаните елементи ---
   var items=[];
