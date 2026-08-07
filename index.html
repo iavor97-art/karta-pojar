@@ -1,0 +1,202 @@
+<!DOCTYPE html>
+<html lang="bg">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Карта на пожар — чертане</title>
+
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet.draw/1.0.4/leaflet.draw.min.css">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet.draw/1.0.4/leaflet.draw.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+
+<style>
+  :root{ --fire:#e03e1a; --fire-d:#b32c0e; --ink:#14181d;
+         --mono:"SFMono-Regular",ui-monospace,Consolas,monospace; }
+  *{box-sizing:border-box}
+  html,body{margin:0;height:100%;font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif}
+  #map{position:absolute;inset:0;background:#c9d2da}
+
+  /* плаваща плочка с площта — долу вляво */
+  #areaTag{
+    position:absolute;left:12px;bottom:12px;z-index:1000;
+    background:rgba(20,24,29,.9);color:#fff;border-radius:12px;padding:12px 16px;
+    box-shadow:0 4px 16px rgba(0,0,0,.3);min-width:150px;backdrop-filter:blur(4px);
+    transition:opacity .2s;
+  }
+  #areaTag .lbl{font-size:10px;letter-spacing:.9px;text-transform:uppercase;opacity:.65;font-weight:700}
+  #areaTag .big{font-family:var(--mono);font-size:26px;font-weight:700;color:#ff7a52;line-height:1.1;margin-top:3px}
+  #areaTag .big span{font-size:13px;opacity:.85;margin-left:3px}
+  #areaTag .sub{font-family:var(--mono);font-size:11px;opacity:.7;margin-top:4px}
+  #areaTag.empty .big{font-size:14px;color:#9fb0c0;font-family:system-ui;font-weight:600}
+  #areaTag.empty .sub{display:none}
+
+  /* десни бутони */
+  .rbtns{position:absolute;top:12px;right:12px;z-index:1000;display:flex;flex-direction:column;gap:8px}
+  .rbtns button{
+    width:44px;height:44px;border:none;border-radius:10px;background:#fff;font-size:18px;cursor:pointer;
+    box-shadow:0 2px 10px rgba(0,0,0,.25);display:grid;place-items:center;
+  }
+  .rbtns button:active{transform:translateY(1px)}
+
+  /* PDF бутон — долу вдясно */
+  #btnPdf{
+    position:absolute;right:12px;bottom:12px;z-index:1000;
+    border:none;border-radius:12px;background:var(--fire);color:#fff;
+    font-family:inherit;font-size:14px;font-weight:700;padding:13px 18px;cursor:pointer;
+    box-shadow:0 4px 16px rgba(224,62,26,.4);display:inline-flex;align-items:center;gap:7px;
+  }
+  #btnPdf:hover{background:var(--fire-d)}
+  #btnPdf:disabled{background:#9aa3ac;box-shadow:none;cursor:not-allowed}
+  #btnPdf:active{transform:translateY(1px)}
+
+  #busy{position:fixed;inset:0;background:rgba(20,24,29,.55);z-index:3000;display:none;place-items:center}
+  #busy .box{background:var(--ink);color:#fff;padding:20px 26px;border-radius:12px;text-align:center;font-weight:600}
+  .spin{width:26px;height:26px;border:3px solid rgba(255,255,255,.25);border-top-color:var(--fire);
+        border-radius:50%;margin:0 auto 12px;animation:s 1s linear infinite}
+  @keyframes s{to{transform:rotate(360deg)}}
+</style>
+</head>
+<body>
+  <div id="map"></div>
+
+  <div class="rbtns">
+    <button id="btnGps" title="Моето местоположение">📍</button>
+    <button id="btnClear" title="Изчисти чертежа">🗑</button>
+  </div>
+
+  <div id="areaTag" class="empty">
+    <div class="lbl">Площ на пожара</div>
+    <div class="big">Очертай контура</div>
+    <div class="sub"></div>
+  </div>
+
+  <button id="btnPdf" disabled>⤓ PDF</button>
+
+  <div id="busy"><div class="box"><div class="spin"></div>Генериране на PDF…</div></div>
+
+<script>
+(function(){
+  "use strict";
+
+  var map = L.map('map',{zoomControl:true}).setView([42.6977,23.3219],12);
+
+  var sat = L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',
+    {maxZoom:19,crossOrigin:'anonymous',attribution:'Esri, Maxar'});
+  var labels = L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/Reference/World_Boundaries_and_Places/MapServer/tile/{z}/{y}/{x}',
+    {maxZoom:19,crossOrigin:'anonymous'});
+  var osm = L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',
+    {maxZoom:19,crossOrigin:'anonymous',attribution:'© OpenStreetMap'});
+  var satGroup = L.layerGroup([sat,labels]).addTo(map);
+  L.control.layers({'Сателит':satGroup,'Улична карта':osm},null,{position:'topleft',collapsed:true}).addTo(map);
+
+  var drawn = new L.FeatureGroup().addTo(map);
+  map.addControl(new L.Control.Draw({
+    position:'topleft',
+    edit:{featureGroup:drawn,remove:true},
+    draw:{
+      polygon:{allowIntersection:false,showArea:true,
+        shapeOptions:{color:'#e03e1a',weight:3,fillColor:'#e03e1a',fillOpacity:.25}},
+      polyline:{shapeOptions:{color:'#f0a202',weight:4}},
+      marker:true, circle:false, rectangle:false, circlemarker:false
+    }
+  }));
+  try{
+    L.drawLocal.draw.toolbar.buttons.polygon='Очертай площ (полигон)';
+    L.drawLocal.draw.toolbar.buttons.polyline='Начертай линия';
+    L.drawLocal.draw.toolbar.buttons.marker='Постави точка';
+  }catch(e){}
+
+  function fmt(n,d){d=d==null?0:d;return n.toLocaleString('bg-BG',{minimumFractionDigits:d,maximumFractionDigits:d});}
+
+  function updateArea(){
+    var m2=0;
+    drawn.eachLayer(function(l){
+      if(l instanceof L.Polygon && L.GeometryUtil) m2+=L.GeometryUtil.geodesicArea(l.getLatLngs()[0]);
+    });
+    var t=document.getElementById('areaTag'), pdf=document.getElementById('btnPdf');
+    if(m2>0){
+      t.className='';
+      t.querySelector('.big').innerHTML=fmt(m2/1000,1)+' <span>дка</span>';
+      t.querySelector('.sub').innerHTML=fmt(m2/10000,2)+' ха · '+fmt(m2,0)+' м²';
+      pdf.disabled=false;
+      window.__area={m2:m2,dka:m2/1000,ha:m2/10000};
+    }else{
+      t.className='empty';
+      t.querySelector('.big').innerHTML='Очертай контура';
+      pdf.disabled=true; window.__area=null;
+    }
+  }
+  map.on(L.Draw.Event.CREATED,function(e){drawn.addLayer(e.layer);updateArea();});
+  map.on(L.Draw.Event.EDITED,updateArea);
+  map.on(L.Draw.Event.DELETED,updateArea);
+  document.getElementById('btnClear').onclick=function(){drawn.clearLayers();updateArea();};
+
+  var meMarker=null;
+  document.getElementById('btnGps').onclick=function(){
+    if(!navigator.geolocation){alert('Няма поддръжка за геолокация.');return;}
+    var b=this;b.textContent='…';
+    navigator.geolocation.getCurrentPosition(function(p){
+      var ll=[p.coords.latitude,p.coords.longitude];map.setView(ll,16);
+      if(meMarker)map.removeLayer(meMarker);
+      meMarker=L.circleMarker(ll,{radius:8,color:'#1f6fe0',fillColor:'#3b82f6',fillOpacity:.9,weight:2}).addTo(map);
+      b.textContent='📍';
+    },function(){alert('Не успях да взема местоположение (провери GPS разрешенията).');b.textContent='📍';},
+    {enableHighAccuracy:true,timeout:10000});
+  };
+
+  document.getElementById('btnPdf').onclick=function(){
+    if(!window.__area)return;
+    var busy=document.getElementById('busy');busy.style.display='grid';
+    var hide=document.querySelectorAll('.leaflet-control-container,.rbtns,#btnPdf,#areaTag');
+    hide.forEach(function(el){el.style.visibility='hidden';});
+    try{if(drawn.getLayers().length)map.fitBounds(drawn.getBounds().pad(0.25));}catch(e){}
+    setTimeout(function(){
+      html2canvas(document.getElementById('map'),{useCORS:true,allowTaint:false,logging:false,scale:2})
+      .then(function(cv){hide.forEach(function(el){el.style.visibility='';});pdf(cv.toDataURL('image/jpeg',0.92));})
+      .catch(function(err){hide.forEach(function(el){el.style.visibility='';});busy.style.display='none';
+        console.error(err);alert('Картата не се засне автоматично. Алтернатива: Печат на браузъра → Запази като PDF.');});
+    },900);
+  };
+
+  function pdf(img){
+    var doc=new window.jspdf.jsPDF({orientation:'landscape',unit:'mm',format:'a4'});
+    var W=297,H=210,mgn=12;
+    var d=new Date(),p=function(x){return String(x).padStart(2,'0');};
+    var when=p(d.getDate())+'.'+p(d.getMonth()+1)+'.'+d.getFullYear()+' g., '+p(d.getHours())+':'+p(d.getMinutes());
+    var c=drawn.getBounds().getCenter();
+
+    doc.setFillColor(20,24,29);doc.rect(0,0,W,18,'F');
+    doc.setFillColor(224,62,26);doc.rect(0,0,6,18,'F');
+    doc.setTextColor(255,255,255);doc.setFont('helvetica','bold');doc.setFontSize(13);
+    doc.text('KARTA NA POZHAR — ochertana plosht',mgn,11.5);
+    doc.setFont('helvetica','normal');doc.setFontSize(9);
+    doc.text(when+' ch.',W-mgn,11.5,{align:'right'});
+
+    var iy=24,ih=150;
+    doc.setDrawColor(200);doc.rect(mgn,iy,W-2*mgn,ih);
+    try{doc.addImage(img,'JPEG',mgn,iy,W-2*mgn,ih,'','FAST');}catch(e){}
+
+    var by=iy+ih+8;
+    doc.setFillColor(251,243,238);doc.setDrawColor(242,217,205);
+    doc.roundedRect(mgn,by,110,20,2,2,'FD');
+    doc.setTextColor(179,44,14);doc.setFont('helvetica','bold');doc.setFontSize(16);
+    doc.text('Plosht: '+fmt(window.__area.dka,1)+' dka',mgn+5,by+9);
+    doc.setTextColor(58,64,72);doc.setFont('helvetica','normal');doc.setFontSize(9);
+    doc.text(fmt(window.__area.ha,2)+' ha  ·  '+fmt(window.__area.m2,0)+' m2',mgn+5,by+16);
+    doc.setTextColor(58,64,72);doc.setFontSize(9);
+    doc.text('Centar: '+c.lat.toFixed(5)+', '+c.lng.toFixed(5),mgn+120,by+8);
+    doc.setTextColor(150,156,164);doc.setFontSize(7.5);
+    doc.text('Ploshtta e izchislena geodezichno. Podlozhka: Esri World Imagery / OpenStreetMap.',mgn+120,by+15);
+
+    doc.save('pozhar_'+new Date().toISOString().slice(0,10)+'.pdf');
+    document.getElementById('busy').style.display='none';
+  }
+
+  setTimeout(function(){map.invalidateSize();},200);
+})();
+</script>
+</body>
+</html>
