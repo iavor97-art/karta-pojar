@@ -316,9 +316,39 @@
       var x=(r.left-rect.left)*dpr, y=(r.top-rect.top)*dpr, w=r.width*dpr, h=r.height*dpr;
       try{ ctx.drawImage(im, x, y, w, h); }catch(e){}
     });
-    drawOverlays(ctx, dpr);
-    return cv;
-  }
+   drawOverlays(ctx, dpr);
+
+// Панел с площта
+if (window.__area) {
+    var pad = 20 * dpr;
+
+    ctx.fillStyle = "rgba(20,20,20,0.75)";
+    ctx.fillRect(
+        pad,
+        pad,
+        250 * dpr,
+        90 * dpr
+    );
+
+    ctx.fillStyle = "#ffffff";
+    ctx.font = (22 * dpr) + "px Arial";
+    ctx.fillText("Площ на пожара", pad + 15 * dpr, pad + 28 * dpr);
+
+    ctx.font = (18 * dpr) + "px Arial";
+    ctx.fillText(
+        window.__area.dka.toFixed(1) + " дка",
+        pad + 15 * dpr,
+        pad + 55 * dpr
+    );
+
+    ctx.fillText(
+        window.__area.ha.toFixed(2) + " ха",
+        pad + 15 * dpr,
+        pad + 80 * dpr
+    );
+}
+
+return cv;
 
   document.getElementById('btnPdf').onclick=function(){
     if(!window.__area)return;
