@@ -206,18 +206,65 @@
   };
 
   // --- PDF ---
+  // Рисува начертаните елементи директно върху заснетия canvas (html2canvas
+  // не хваща надеждно векторния слой на Leaflet)
+  function drawOverlays(ctx, s){
+    items.forEach(function(l){
+      if(l instanceof L.Polygon){
+        var ring=l.getLatLngs()[0];
+        if(!ring||!ring.length) return;
+        ctx.beginPath();
+        ring.forEach(function(ll,i){ var pt=map.latLngToContainerPoint(ll);
+          if(i) ctx.lineTo(pt.x*s,pt.y*s); else ctx.moveTo(pt.x*s,pt.y*s); });
+        ctx.closePath();
+        ctx.fillStyle='rgba(224,62,26,0.25)'; ctx.fill();
+        ctx.lineWidth=3*s; ctx.strokeStyle='#e03e1a'; ctx.lineJoin='round'; ctx.stroke();
+      } else if(l instanceof L.Polyline){
+        var pts=l.getLatLngs();
+        if(!pts||!pts.length) return;
+        ctx.beginPath();
+        pts.forEach(function(ll,i){ var pt=map.latLngToContainerPoint(ll);
+          if(i) ctx.lineTo(pt.x*s,pt.y*s); else ctx.moveTo(pt.x*s,pt.y*s); });
+        ctx.lineWidth=4*s; ctx.strokeStyle='#f0a202'; ctx.lineJoin='round'; ctx.lineCap='round'; ctx.stroke();
+      } else if(l.getLatLng){
+        var pt=map.latLngToContainerPoint(l.getLatLng()), x=pt.x*s, y=pt.y*s, r=6*s;
+        ctx.beginPath(); ctx.arc(x,y,r,0,2*Math.PI);
+        ctx.fillStyle='#e03e1a'; ctx.fill();
+        ctx.lineWidth=2*s; ctx.strokeStyle='#fff'; ctx.stroke();
+      }
+    });
+  }
+
   document.getElementById('btnPdf').onclick=function(){
     if(!window.__area)return;
     var busy=document.getElementById('busy');busy.style.display='grid';
+    var mapEl=document.getElementById('map');
     var hide=document.querySelectorAll('.leaflet-control-container,.rbtns,#btnPdf,#areaTag,#hint');
     hide.forEach(function(el){el.style.visibility='hidden';});
-    try{ var b=itemsBounds(); if(b.isValid()) map.fitBounds(b.pad(0.25)); }catch(e){}
+
+    // побери чертежа в кадъра (без анимация, за да съвпаднат координатите)
+    try{ var b=itemsBounds(); if(b.isValid()) map.fitBounds(b.pad(0.2),{animate:false}); }catch(e){}
+
     setTimeout(function(){
-      html2canvas(document.getElementById('map'),{useCORS:true,allowTaint:false,logging:false,scale:2})
-      .then(function(cv){hide.forEach(function(el){el.style.visibility='';});makePdf(cv.toDataURL('image/jpeg',0.92),cv.width,cv.height);})
-      .catch(function(err){hide.forEach(function(el){el.style.visibility='';});busy.style.display='none';
-        console.error(err);alert('Картата не се засне автоматично. Алтернатива: Печат на браузъра → Запази като PDF.');});
-    },900);
+      // скрий векторния и маркерния слой, за да не се дублират с ръчното чертане
+      var op=map.getPane('overlayPane'), mp=map.getPane('markerPane');
+      op.style.visibility='hidden'; mp.style.visibility='hidden';
+
+      html2canvas(mapEl,{useCORS:true,allowTaint:false,logging:false,scale:2})
+      .then(function(cv){
+        op.style.visibility=''; mp.style.visibility='';
+        hide.forEach(function(el){el.style.visibility='';});
+        var ctx=cv.getContext('2d'), s=cv.width/mapEl.clientWidth;
+        drawOverlays(ctx,s);                                   // чертежът върху снимката
+        makePdf(cv.toDataURL('image/jpeg',0.92),cv.width,cv.height);
+      })
+      .catch(function(err){
+        op.style.visibility=''; mp.style.visibility='';
+        hide.forEach(function(el){el.style.visibility='';});
+        busy.style.display='none'; console.error(err);
+        alert('Картата не се засне автоматично. Алтернатива: Печат на браузъра → Запази като PDF.');
+      });
+    },1100);
   };
 
   function makePdf(img,cw,ch){
