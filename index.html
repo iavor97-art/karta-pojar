@@ -214,19 +214,22 @@
     try{ var b=itemsBounds(); if(b.isValid()) map.fitBounds(b.pad(0.25)); }catch(e){}
     setTimeout(function(){
       html2canvas(document.getElementById('map'),{useCORS:true,allowTaint:false,logging:false,scale:2})
-      .then(function(cv){hide.forEach(function(el){el.style.visibility='';});makePdf(cv.toDataURL('image/jpeg',0.92));})
+      .then(function(cv){hide.forEach(function(el){el.style.visibility='';});makePdf(cv.toDataURL('image/jpeg',0.92),cv.width,cv.height);})
       .catch(function(err){hide.forEach(function(el){el.style.visibility='';});busy.style.display='none';
         console.error(err);alert('Картата не се засне автоматично. Алтернатива: Печат на браузъра → Запази като PDF.');});
     },900);
   };
 
-  function makePdf(img){
-    var doc=new window.jspdf.jsPDF({orientation:'landscape',unit:'mm',format:'a4'});
-    var W=297,H=210,mgn=12;
+  function makePdf(img,cw,ch){
+    var jsPDF=window.jspdf.jsPDF;
+    var landscape = cw >= ch;                       // PDF-ът следва формата на снимката
+    var doc=new jsPDF({orientation:landscape?'landscape':'portrait',unit:'mm',format:'a4'});
+    var W=doc.internal.pageSize.getWidth(), H=doc.internal.pageSize.getHeight(), mgn=12;
     var d=new Date(),p=function(x){return String(x).padStart(2,'0');};
     var when=p(d.getDate())+'.'+p(d.getMonth()+1)+'.'+d.getFullYear()+' g., '+p(d.getHours())+':'+p(d.getMinutes());
     var c=itemsBounds().getCenter();
 
+    // заглавна лента
     doc.setFillColor(20,24,29);doc.rect(0,0,W,18,'F');
     doc.setFillColor(224,62,26);doc.rect(0,0,6,18,'F');
     doc.setTextColor(255,255,255);doc.setFont('helvetica','bold');doc.setFontSize(13);
@@ -234,21 +237,27 @@
     doc.setFont('helvetica','normal');doc.setFontSize(9);
     doc.text(when+' ch.',W-mgn,11.5,{align:'right'});
 
-    var iy=24,ih=150;
-    doc.setDrawColor(200);doc.rect(mgn,iy,W-2*mgn,ih);
-    try{doc.addImage(img,'JPEG',mgn,iy,W-2*mgn,ih,'','FAST');}catch(e){}
+    // карта — вписана пропорционално (contain), центрирана, БЕЗ разтягане
+    var top=24, footerH=22;
+    var availW=W-2*mgn, availH=H-top-footerH-6;
+    var ar=cw/ch, dw=availW, dh=dw/ar;
+    if(dh>availH){ dh=availH; dw=dh*ar; }
+    var dx=mgn+(availW-dw)/2, dy=top+(availH-dh)/2;
+    try{doc.addImage(img,'JPEG',dx,dy,dw,dh,'','FAST');}catch(e){}
+    doc.setDrawColor(200);doc.rect(dx,dy,dw,dh);
 
-    var by=iy+ih+8;
+    // лента с площ + координати
+    var by=top+availH+2;
     doc.setFillColor(251,243,238);doc.setDrawColor(242,217,205);
-    doc.roundedRect(mgn,by,110,20,2,2,'FD');
-    doc.setTextColor(179,44,14);doc.setFont('helvetica','bold');doc.setFontSize(16);
+    doc.roundedRect(mgn,by,Math.min(118,availW),20,2,2,'FD');
+    doc.setTextColor(179,44,14);doc.setFont('helvetica','bold');doc.setFontSize(15);
     doc.text('Plosht: '+fmt(window.__area.dka,1)+' dka',mgn+5,by+9);
     doc.setTextColor(58,64,72);doc.setFont('helvetica','normal');doc.setFontSize(9);
     doc.text(fmt(window.__area.ha,2)+' ha  ·  '+fmt(window.__area.m2,0)+' m2',mgn+5,by+16);
-    doc.setTextColor(58,64,72);doc.setFontSize(9);
-    doc.text('Centar: '+c.lat.toFixed(5)+', '+c.lng.toFixed(5),mgn+120,by+8);
-    doc.setTextColor(150,156,164);doc.setFontSize(7.5);
-    doc.text('Ploshtta e izchislena geodezichno. Podlozhka: Esri World Imagery / OpenStreetMap.',mgn+120,by+15);
+    doc.setTextColor(58,64,72);doc.setFontSize(8.5);
+    doc.text('Centar: '+c.lat.toFixed(5)+', '+c.lng.toFixed(5), W-mgn, by+8, {align:'right'});
+    doc.setTextColor(150,156,164);doc.setFontSize(7);
+    doc.text('Geodezichno izchislenie · Esri World Imagery / OpenStreetMap', W-mgn, by+15, {align:'right'});
 
     doc.save('pozhar_'+new Date().toISOString().slice(0,10)+'.pdf');
     document.getElementById('busy').style.display='none';
