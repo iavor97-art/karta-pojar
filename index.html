@@ -5,12 +5,12 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Карта на пожар — чертане</title>
 
-<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css">
-<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet.draw/1.0.4/leaflet.draw.min.css">
-<script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet.draw/1.0.4/leaflet.draw.min.js"></script>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/leaflet@1.9.4/dist/leaflet.min.css">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@geoman-io/leaflet-geoman-free@2.20.0/dist/leaflet-geoman.css">
+<script src="https://cdn.jsdelivr.net/npm/leaflet@1.9.4/dist/leaflet.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@geoman-io/leaflet-geoman-free@2.20.0/dist/leaflet-geoman.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/html2canvas@1.4.1/dist/html2canvas.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/jspdf@2.5.1/dist/jspdf.umd.min.js"></script>
 
 <style>
   :root{ --fire:#e03e1a; --fire-d:#b32c0e; --ink:#14181d;
@@ -19,12 +19,10 @@
   html,body{margin:0;height:100%;font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif}
   #map{position:absolute;inset:0;background:#c9d2da}
 
-  /* плаваща плочка с площта — долу вляво */
   #areaTag{
     position:absolute;left:12px;bottom:12px;z-index:1000;
     background:rgba(20,24,29,.9);color:#fff;border-radius:12px;padding:12px 16px;
-    box-shadow:0 4px 16px rgba(0,0,0,.3);min-width:150px;backdrop-filter:blur(4px);
-    transition:opacity .2s;
+    box-shadow:0 4px 16px rgba(0,0,0,.3);min-width:150px;backdrop-filter:blur(4px);transition:opacity .2s;
   }
   #areaTag .lbl{font-size:10px;letter-spacing:.9px;text-transform:uppercase;opacity:.65;font-weight:700}
   #areaTag .big{font-family:var(--mono);font-size:26px;font-weight:700;color:#ff7a52;line-height:1.1;margin-top:3px}
@@ -33,7 +31,6 @@
   #areaTag.empty .big{font-size:14px;color:#9fb0c0;font-family:system-ui;font-weight:600}
   #areaTag.empty .sub{display:none}
 
-  /* десни бутони */
   .rbtns{position:absolute;top:12px;right:12px;z-index:1000;display:flex;flex-direction:column;gap:8px}
   .rbtns button{
     width:44px;height:44px;border:none;border-radius:10px;background:#fff;font-size:18px;cursor:pointer;
@@ -41,7 +38,6 @@
   }
   .rbtns button:active{transform:translateY(1px)}
 
-  /* PDF бутон — долу вдясно */
   #btnPdf{
     position:absolute;right:12px;bottom:12px;z-index:1000;
     border:none;border-radius:12px;background:var(--fire);color:#fff;
@@ -52,6 +48,13 @@
   #btnPdf:disabled{background:#9aa3ac;box-shadow:none;cursor:not-allowed}
   #btnPdf:active{transform:translateY(1px)}
 
+  /* подсказка при първо зареждане */
+  #hint{
+    position:absolute;top:12px;left:50%;transform:translateX(-50%);z-index:1000;
+    background:rgba(20,24,29,.9);color:#fff;padding:8px 14px;border-radius:20px;font-size:12.5px;
+    box-shadow:0 2px 10px rgba(0,0,0,.25);white-space:nowrap;
+  }
+
   #busy{position:fixed;inset:0;background:rgba(20,24,29,.55);z-index:3000;display:none;place-items:center}
   #busy .box{background:var(--ink);color:#fff;padding:20px 26px;border-radius:12px;text-align:center;font-weight:600}
   .spin{width:26px;height:26px;border:3px solid rgba(255,255,255,.25);border-top-color:var(--fire);
@@ -61,6 +64,8 @@
 </head>
 <body>
   <div id="map"></div>
+
+  <div id="hint">Избери ⬠ горе вляво и очертай площта на пожара</div>
 
   <div class="rbtns">
     <button id="btnGps" title="Моето местоположение">📍</button>
@@ -81,32 +86,6 @@
 (function(){
   "use strict";
 
-  // Кръпка за известен бъг в Leaflet.draw 1.0.4 + Leaflet 1.9
-  // (readableArea: "type is not defined" — чупи чертането на полигон/линия)
-  if(L.GeometryUtil){
-    L.GeometryUtil.readableArea = function(area,isMetric,precision){
-      var areaStr, units, type;
-      precision = L.Util.extend({},{km:2,ha:2,m:2,mi:2,ac:2,yd:0,ft:0,nm:2},precision);
-      if(isMetric){
-        units=['ha','m']; type=typeof isMetric;
-        if(type==='string') units=[isMetric];
-        else if(type!=='boolean') units=isMetric;
-        if(area>=1000000 && units.indexOf('km')!==-1)
-          areaStr=L.GeometryUtil.formattedNumber(area*0.000001,precision.km)+' km²';
-        else if(area>=10000 && units.indexOf('ha')!==-1)
-          areaStr=L.GeometryUtil.formattedNumber(area*0.0001,precision.ha)+' ha';
-        else
-          areaStr=L.GeometryUtil.formattedNumber(area,precision.m)+' m²';
-      }else{
-        area/=0.836127;
-        if(area>=3097600) areaStr=L.GeometryUtil.formattedNumber(area/3097600,precision.mi)+' mi²';
-        else if(area>=4840) areaStr=L.GeometryUtil.formattedNumber(area/4840,precision.ac)+' acres';
-        else areaStr=L.GeometryUtil.formattedNumber(area,precision.yd)+' yd²';
-      }
-      return areaStr;
-    };
-  }
-
   var map = L.map('map',{zoomControl:true}).setView([42.6977,23.3219],12);
 
   var sat = L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',
@@ -118,29 +97,60 @@
   var satGroup = L.layerGroup([sat,labels]).addTo(map);
   L.control.layers({'Сателит':satGroup,'Улична карта':osm},null,{position:'topleft',collapsed:true}).addTo(map);
 
-  var drawn = new L.FeatureGroup().addTo(map);
-  map.addControl(new L.Control.Draw({
-    position:'topleft',
-    edit:{featureGroup:drawn,remove:true},
-    draw:{
-      polygon:{allowIntersection:false,showArea:true,
-        shapeOptions:{color:'#e03e1a',weight:3,fillColor:'#e03e1a',fillOpacity:.25}},
-      polyline:{shapeOptions:{color:'#f0a202',weight:4}},
-      marker:true, circle:false, rectangle:false, circlemarker:false
+  // --- Собствено геодезично изчисление на площ (независимо от библиотека) ---
+  function geodesicArea(latlngs){
+    var R=6378137, area=0, n=latlngs.length, d2r=Math.PI/180;
+    if(n<3) return 0;
+    for(var i=0;i<n;i++){
+      var p1=latlngs[i], p2=latlngs[(i+1)%n];
+      area += (p2.lng-p1.lng)*d2r*(2+Math.sin(p1.lat*d2r)+Math.sin(p2.lat*d2r));
     }
-  }));
-  try{
-    L.drawLocal.draw.toolbar.buttons.polygon='Очертай площ (полигон)';
-    L.drawLocal.draw.toolbar.buttons.polyline='Начертай линия';
-    L.drawLocal.draw.toolbar.buttons.marker='Постави точка';
-  }catch(e){}
-
+    return Math.abs(area*R*R/2);
+  }
   function fmt(n,d){d=d==null?0:d;return n.toLocaleString('bg-BG',{minimumFractionDigits:d,maximumFractionDigits:d});}
+
+  // --- Geoman: български надписи + инструменти ---
+  map.pm.setLang('bg', {
+    tooltips:{
+      placeMarker:'Кликни за точка',
+      firstVertex:'Кликни за първа точка',
+      continueLine:'Кликни за следваща точка',
+      finishPoly:'Кликни върху първата точка за затваряне',
+      finishLine:'Кликни върху последната точка за край'
+    },
+    actions:{ finish:'Готово', cancel:'Отказ', removeLastVertex:'Изтрий последната точка' },
+    buttonTitles:{
+      drawMarkerButton:'Постави точка',
+      drawPolyButton:'Очертай площ (полигон)',
+      drawLineButton:'Начертай линия',
+      editButton:'Редактирай върхове',
+      deleteButton:'Изтрий елемент'
+    }
+  }, 'en');
+
+  map.pm.setGlobalOptions({
+    templineStyle:{color:'#e03e1a',weight:3},
+    hintlineStyle:{color:'#e03e1a',dashArray:[5,5]},
+    pathOptions:{color:'#e03e1a',fillColor:'#e03e1a',fillOpacity:0.25,weight:3}
+  });
+
+  map.pm.addControls({
+    position:'topleft',
+    drawMarker:true, drawPolyline:true, drawPolygon:true,
+    drawCircle:false, drawCircleMarker:false, drawRectangle:false, drawText:false,
+    editMode:true, dragMode:false, cutPolygon:false, removalMode:true, rotateMode:false
+  });
+
+  // --- Управление на начертаните елементи ---
+  var items=[];
 
   function updateArea(){
     var m2=0;
-    drawn.eachLayer(function(l){
-      if(l instanceof L.Polygon && L.GeometryUtil) m2+=L.GeometryUtil.geodesicArea(l.getLatLngs()[0]);
+    items.forEach(function(l){
+      if(l instanceof L.Polygon){
+        var lls=l.getLatLngs();
+        if(lls && lls[0] && lls[0].length) m2 += geodesicArea(lls[0]);
+      }
     });
     var t=document.getElementById('areaTag'), pdf=document.getElementById('btnPdf');
     if(m2>0){
@@ -155,11 +165,33 @@
       pdf.disabled=true; window.__area=null;
     }
   }
-  map.on(L.Draw.Event.CREATED,function(e){drawn.addLayer(e.layer);updateArea();});
-  map.on(L.Draw.Event.EDITED,updateArea);
-  map.on(L.Draw.Event.DELETED,updateArea);
-  document.getElementById('btnClear').onclick=function(){drawn.clearLayers();updateArea();};
 
+  map.on('pm:create', function(e){
+    items.push(e.layer);
+    e.layer.on('pm:edit', updateArea);
+    document.getElementById('hint').style.display='none';
+    updateArea();
+  });
+  map.on('pm:remove', function(e){
+    items = items.filter(function(l){ return l!==e.layer; });
+    updateArea();
+  });
+
+  function itemsBounds(){
+    var b=L.latLngBounds([]);
+    items.forEach(function(l){
+      if(l.getBounds) b.extend(l.getBounds());
+      else if(l.getLatLng) b.extend(l.getLatLng());
+    });
+    return b;
+  }
+
+  document.getElementById('btnClear').onclick=function(){
+    items.forEach(function(l){ map.removeLayer(l); });
+    items=[]; updateArea();
+  };
+
+  // --- GPS ---
   var meMarker=null;
   document.getElementById('btnGps').onclick=function(){
     if(!navigator.geolocation){alert('Няма поддръжка за геолокация.');return;}
@@ -173,26 +205,27 @@
     {enableHighAccuracy:true,timeout:10000});
   };
 
+  // --- PDF ---
   document.getElementById('btnPdf').onclick=function(){
     if(!window.__area)return;
     var busy=document.getElementById('busy');busy.style.display='grid';
-    var hide=document.querySelectorAll('.leaflet-control-container,.rbtns,#btnPdf,#areaTag');
+    var hide=document.querySelectorAll('.leaflet-control-container,.rbtns,#btnPdf,#areaTag,#hint');
     hide.forEach(function(el){el.style.visibility='hidden';});
-    try{if(drawn.getLayers().length)map.fitBounds(drawn.getBounds().pad(0.25));}catch(e){}
+    try{ var b=itemsBounds(); if(b.isValid()) map.fitBounds(b.pad(0.25)); }catch(e){}
     setTimeout(function(){
       html2canvas(document.getElementById('map'),{useCORS:true,allowTaint:false,logging:false,scale:2})
-      .then(function(cv){hide.forEach(function(el){el.style.visibility='';});pdf(cv.toDataURL('image/jpeg',0.92));})
+      .then(function(cv){hide.forEach(function(el){el.style.visibility='';});makePdf(cv.toDataURL('image/jpeg',0.92));})
       .catch(function(err){hide.forEach(function(el){el.style.visibility='';});busy.style.display='none';
         console.error(err);alert('Картата не се засне автоматично. Алтернатива: Печат на браузъра → Запази като PDF.');});
     },900);
   };
 
-  function pdf(img){
+  function makePdf(img){
     var doc=new window.jspdf.jsPDF({orientation:'landscape',unit:'mm',format:'a4'});
     var W=297,H=210,mgn=12;
     var d=new Date(),p=function(x){return String(x).padStart(2,'0');};
     var when=p(d.getDate())+'.'+p(d.getMonth()+1)+'.'+d.getFullYear()+' g., '+p(d.getHours())+':'+p(d.getMinutes());
-    var c=drawn.getBounds().getCenter();
+    var c=itemsBounds().getCenter();
 
     doc.setFillColor(20,24,29);doc.rect(0,0,W,18,'F');
     doc.setFillColor(224,62,26);doc.rect(0,0,6,18,'F');
